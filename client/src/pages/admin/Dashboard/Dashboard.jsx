@@ -1,47 +1,48 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import useAuth from "../../../hooks/useAuth";
+import { tenderService } from "../../../services/tenderService";
 import PageHeader from "../../../components/shared/PageHeader";
 import StatsCard from "./components/StatsCard";
 import DraftTenderList from "./components/DraftTenderList";
 import PublishedTenderList from "./components/PublishedTenderList";
 
 export default function Dashboard() {
-  const [drafts, setDrafts] = useState([
-    {
-      id: "d1",
-      title: "City Park Renovation",
-      updatedAt: new Date().toISOString(),
-      step: 2,
-    },
-    {
-      id: "d2",
-      title: "School IT Infrastructure Upgrade",
-      updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-      step: 1,
-    },
-  ]);
+  const { token } = useAuth();
+  const [tenders, setTenders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  const [published, setPublished] = useState([
-    {
-      id: "p1",
-      title: "Municipal Road Maintenance 2026",
-      publishedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
-      deadline: new Date(Date.now() + 1000 * 60 * 60 * 24 * 10).toISOString(),
-    },
-  ]);
+  useEffect(() => {
+    async function loadTenders() {
+      setLoading(true);
+      try {
+        const { tenders: data } = await tenderService.listTenders(token);
+        setTenders(data);
+      } catch (err) {
+        setError(err.message || "Failed to load tenders");
+      } finally {
+        setLoading(false);
+      }
+    }
+    if (token) loadTenders();
+  }, [token]);
+
+  const drafts = useMemo(() => tenders.filter(t => t.status === 'DRAFT'), [tenders]);
+  const published = useMemo(() => tenders.filter(t => t.status === 'PUBLISHED'), [tenders]);
 
   const upcomingCount = useMemo(() => {
     const now = Date.now();
-    const within = 1000 * 60 * 60 * 24 * 7; // 7 days
+    const within = 1000 * 60 * 60 * 24 * 7;
     return published.filter(
       (t) =>
-        new Date(t.deadline).getTime() - now <= within &&
-        new Date(t.deadline).getTime() - now > 0
+        new Date(t.submission_deadline).getTime() - now <= within &&
+        new Date(t.submission_deadline).getTime() - now > 0
     ).length;
   }, [published]);
 
   const handleDeleteDraft = (id) => {
-    setDrafts((prev) => prev.filter((d) => d.id !== id));
+    setTenders((prev) => prev.filter((t) => t.tender_id !== id));
   };
 
   return (
@@ -58,6 +59,12 @@ export default function Dashboard() {
           </Link>
         }
       />
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       {/* Overview Cards */}
       <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-10">
@@ -81,7 +88,13 @@ export default function Dashboard() {
             Draft Tenders
           </h2>
         </div>
-        <DraftTenderList drafts={drafts} onDelete={handleDeleteDraft} />
+        {loading ? (
+          <div className="text-sm text-neutral-600">Loading...</div>
+        ) : drafts.length === 0 ? (
+          <div className="text-sm text-neutral-600">No draft tenders.</div>
+        ) : (
+          <DraftTenderList drafts={drafts.map(t => ({ id: t.tender_id, title: t.title, updatedAt: t.created_at }))} onDelete={handleDeleteDraft} />
+        )}
       </section>
 
       {/* Published */}
@@ -91,7 +104,13 @@ export default function Dashboard() {
             Published Tenders
           </h2>
         </div>
-        <PublishedTenderList tenders={published} />
+        {loading ? (
+          <div className="text-sm text-neutral-600">Loading...</div>
+        ) : published.length === 0 ? (
+          <div className="text-sm text-neutral-600">No published tenders.</div>
+        ) : (
+          <PublishedTenderList tenders={published.map(t => ({ id: t.tender_id, title: t.title, publishedAt: t.created_at, deadline: t.submission_deadline }))} />
+        )}
       </section>
     </div>
   );
