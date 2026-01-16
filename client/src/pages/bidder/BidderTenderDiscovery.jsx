@@ -34,6 +34,7 @@ export default function BidderTenderDiscovery() {
   });
   const [selectedView, setSelectedView] = useState('grid');
   const [tenders, setTenders] = useState([]);
+  const [statistics, setStatistics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [page, setPage] = useState(1);
@@ -93,10 +94,14 @@ export default function BidderTenderDiscovery() {
       };
 
       const response = await tenderService.discoverTenders(params);
-      
+
       if (response.data && response.data.tenders) {
         setTenders(response.data.tenders);
         setTotalPages(response.data.pagination?.pages || 1);
+        // Store real statistics from backend
+        if (response.data.statistics) {
+          setStatistics(response.data.statistics);
+        }
       } else {
         setError('Failed to load tenders');
       }
@@ -112,6 +117,21 @@ export default function BidderTenderDiscovery() {
     navigate(`/bidder/tenders/${tenderId}/analyze`);
   };
 
+  // Format total value for display
+  const formatValue = (value) => {
+    if (!value || value === 0) return '₹0';
+    if (value >= 10000000) return `₹${(value / 10000000).toFixed(1)}Cr`;
+    if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`;
+    return `₹${value.toLocaleString()}`;
+  };
+
+  // Use real statistics from backend, with fallbacks
+  const stats = [
+    { label: 'Available Tenders', value: (statistics?.totalTenders || tenders.length).toString(), icon: FileText, color: 'blue' },
+    { label: 'Avg. Competition', value: (statistics?.avgCompetition || 0).toString(), icon: Users, color: 'purple' },
+    { label: 'Closing Soon', value: (statistics?.closingSoon || 0).toString(), icon: Clock, color: 'orange' },
+    { label: 'Total Value', value: formatValue(statistics?.totalValue || 0), icon: TrendingUp, color: 'green' }
+  ];
   // Government portal functions - OPEN IN NEW TAB instead of iframe
   const openGovernmentPortal = (portal) => {
     setActivePortal(portal);
