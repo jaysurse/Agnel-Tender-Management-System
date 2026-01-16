@@ -1,4 +1,4 @@
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   FileText,
@@ -6,6 +6,11 @@ import {
   Settings,
   Bookmark,
   FileCheck,
+  Search,
+  TrendingUp,
+  Clock,
+  LogOut,
+  Building2,
 } from "lucide-react";
 
 const adminMenu = [
@@ -18,11 +23,13 @@ const adminMenu = [
 ];
 
 const bidderMenu = [
-  { label: "Dashboard", href: "/bidder/dashboard", icon: LayoutDashboard },
-  { label: "Available Tenders", href: "/bidder/tenders", icon: Bookmark },
-  { label: "Saved Tenders", href: "/bidder/saved-tenders", icon: Bookmark },
-  { label: "Proposals", href: "/bidder/proposals", icon: FileCheck },
-  { label: "Profile", href: "/bidder/profile", icon: Settings },
+  { label: "Dashboard", href: "/bidder/dashboard", icon: LayoutDashboard, rootPath: "/bidder/dashboard" },
+  { label: "Discover Tenders", href: "/bidder/tenders", icon: Search, rootPath: "/bidder/tenders" },
+  { label: "Saved Tenders", href: "/bidder/saved-tenders", icon: Bookmark, rootPath: "/bidder/saved-tenders" },
+  { label: "Tender Analysis", href: "/bidder/analyze", icon: TrendingUp, rootPath: "/bidder/analyze" },
+  { label: "Proposal Drafting", href: "/bidder/proposal-drafting", icon: FileCheck, rootPath: "/bidder/proposal-drafting" },
+  { label: "History", href: "/bidder/history", icon: Clock, rootPath: "/bidder/history" },
+  { label: "Profile", href: "/bidder/profile", icon: Settings, rootPath: "/bidder/profile" },
 ];
 
 /**
@@ -38,20 +45,56 @@ function isRouteActive(currentPath, menuItem) {
 
 export default function Sidebar({ role = "admin" }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const menu = role === "admin" ? adminMenu : bidderMenu;
+  const user = JSON.parse(localStorage.getItem("user") || "{}");
+
+  const handleLogout = () => {
+    localStorage.removeItem("user");
+    localStorage.removeItem("token");
+    localStorage.removeItem("role");
+    navigate("/login");
+  };
+
+  const roleLabel = role === "admin" ? "Authority" : "Bidder";
 
   return (
-    <aside className="w-64 h-screen bg-neutral-950 text-white flex flex-col fixed top-0 left-0 overflow-y-auto">
+    <aside className="w-64 h-screen bg-white border-r border-neutral-200 flex flex-col fixed top-0 left-0 overflow-y-auto shadow-sm">
       {/* Logo */}
-      <div className="h-16 flex items-center px-6 border-b border-neutral-800">
-        <Link to="/" className="font-semibold text-lg tracking-tight">
-          TenderFlow AI
+      <div className="h-16 flex items-center px-6 border-b border-neutral-200">
+        <Link to="/" className="flex items-center gap-3">
+          <div className="w-9 h-9 bg-primary-600 rounded-lg flex items-center justify-center">
+            <Building2 className="h-5 w-5 text-white" />
+          </div>
+          <span className="font-semibold text-lg text-neutral-900 tracking-tight">
+            TenderFlow
+          </span>
         </Link>
       </div>
 
+      {/* User Info */}
+      <div className="px-4 py-3 border-b border-neutral-100">
+        <div className="flex items-center gap-3 px-2">
+          <div className="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-sm font-semibold">
+            {user.name ? user.name.charAt(0).toUpperCase() : roleLabel.charAt(0)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-neutral-900 truncate">
+              {user.name || "User"}
+            </p>
+            <p className="text-xs text-neutral-500">
+              {roleLabel}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Navigation */}
-      <nav className="flex-1 px-4 py-6">
-        <ul className="space-y-2">
+      <nav className="flex-1 px-3 py-4">
+        <p className="px-3 mb-2 text-xs font-semibold text-neutral-400 uppercase tracking-wider">
+          Menu
+        </p>
+        <ul className="space-y-1">
           {menu.map((item) => {
             const Icon = item.icon;
             const isActive = isRouteActive(location.pathname, item);
@@ -59,13 +102,13 @@ export default function Sidebar({ role = "admin" }) {
               <li key={item.href}>
                 <Link
                   to={item.href}
-                  className={`flex items-center gap-3 px-4 py-2.5 rounded-md text-sm font-medium transition-colors ${
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                     isActive
-                      ? "bg-primary-600 text-white"
-                      : "text-neutral-400 hover:bg-neutral-800 hover:text-white"
+                      ? "bg-primary-50 text-primary-700 border border-primary-100"
+                      : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
                   }`}
                 >
-                  <Icon className="w-5 h-5" />
+                  <Icon className={`w-5 h-5 ${isActive ? "text-primary-600" : "text-neutral-400"}`} />
                   {item.label}
                 </Link>
               </li>
@@ -75,8 +118,14 @@ export default function Sidebar({ role = "admin" }) {
       </nav>
 
       {/* Footer */}
-      <div className="p-4 border-t border-neutral-800 text-xs text-neutral-500">
-        <p>Logged in as {role === "admin" ? "Authority" : "Bidder"}</p>
+      <div className="p-3 border-t border-neutral-200">
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-neutral-600 hover:bg-red-50 hover:text-red-600 transition-colors"
+        >
+          <LogOut className="w-5 h-5" />
+          Sign Out
+        </button>
       </div>
     </aside>
   );
