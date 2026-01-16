@@ -7,6 +7,24 @@ export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
+// Parse the DATABASE_URL to extract components
+const url = new URL(env.DATABASE_URL);
+
+const poolConfig = {
+  host: url.hostname,
+  port: parseInt(url.port) || 5432,
+  database: url.pathname.slice(1) || 'postgres',
+  user: url.username,
+  password: decodeURIComponent(url.password),
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000,
+};
+
+export const pool = new Pool(poolConfig);
 
 pool.on('connect', () => {
   console.log('[DB] Connection established to PostgreSQL');
