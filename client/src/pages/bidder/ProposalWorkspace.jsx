@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import BidderLayout from '../../components/bidder-layout/BidderLayout';
 import ProposalHeader from '../../components/proposal/ProposalHeader';
@@ -6,13 +6,40 @@ import SectionList from '../../components/proposal/SectionList';
 import ProposalEditor from '../../components/proposal/ProposalEditor';
 import ProposalAIAdvisor from '../../components/proposal/ProposalAIAdvisor';
 import Loading from '../../components/bidder-common/Loading';
+
+// New Components
+import { ProposalThemeProvider } from '../../context/ProposalThemeContext';
+import ExportButtons from '../../components/proposal/ExportButtons';
+import ExportModal from '../../components/proposal/ExportModal';
+// PublishWorkflow available for future use
+// import PublishWorkflow from '../../components/proposal/PublishWorkflow';
+import PublishConfirmModal from '../../components/proposal/PublishConfirmModal';
+import VersionHistory from '../../components/proposal/VersionHistory';
+import ThemeToggle from '../../components/proposal/ThemeToggle';
+import ShortcutsHelpModal from '../../components/proposal/ShortcutsHelpModal';
+import OfflineIndicator, { OfflineBanner } from '../../components/proposal/OfflineIndicator';
+import A11yAnnouncer from '../../components/proposal/A11yAnnouncer';
+
+// Hooks
+import useProposalShortcuts from '../../hooks/useProposalShortcuts';
+import useOfflineProposal from '../../hooks/useOfflineProposal';
+import useA11yAnnounce from '../../hooks/useA11yAnnounce';
+
+// Services
 import { tenderService } from '../../services/bidder/tenderService';
 import { proposalService } from '../../services/bidder/proposalService';
-import { ArrowLeft, Menu, Maximize2, Minimize2 } from 'lucide-react';
+import proposalExportService from '../../services/bidder/proposalExportService';
+
+// Icons
+import { ArrowLeft, Menu, Maximize2, Minimize2, Keyboard } from 'lucide-react';
+
+// Styles
+import '../../styles/proposal-theme.css';
 
 export default function ProposalWorkspace() {
   const { tenderId } = useParams();
   const navigate = useNavigate();
+  const announcerRef = useRef(null);
 
   // State Management
   const [tender, setTender] = useState(null);
@@ -24,15 +51,72 @@ export default function ProposalWorkspace() {
 
   // Editing State
   const [sectionContents, setSectionContents] = useState({});
-  const [savingStatus, setSavingStatus] = useState({}); // Track saving per section: 'saving'|'saved'|null
+  const [savingStatus, setSavingStatus] = useState({});
   const [lastSaved, setLastSaved] = useState({});
-  const autoSaveTimers = useRef({}); // Track debounce timers
+  const autoSaveTimers = useRef({});
 
   // UI State
   const [showSidebar, setShowSidebar] = useState(true);
   const [showAIAdvisor, setShowAIAdvisor] = useState(true);
   const [fullscreenMode, setFullscreenMode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // New Feature States
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+
+  // Accessibility announcements
+  const { announce, announceSaved } = useA11yAnnounce();
+
+  // Offline support
+  const {
+    isOnline,
+    isSyncing,
+    pendingChanges,
+    lastSynced,
+    saveOffline,
+    forceSync
+  } = useOfflineProposal({
+    proposalId: proposal?._id || proposal?.proposal_id,
+    onSync: async (data) => {
+      // Sync to server when online
+      if (data.sectionId && data.content) {
+        await proposalService.updateProposalSection(
+          data.proposalId,
+          data.sectionId,
+          data.content
+        );
+      }
+    }
+  });
+
+  // Keyboard shortcuts
+  const { shortcuts } = useProposalShortcuts({
+    onExport: () => setShowExportModal(true),
+    onPublish: () => {
+      if (completionPercent === 100) {
+        setShowPublishModal(true);
+      }
+    },
+    onSave: () => {
+      if (activeSection) {
+        const sectionId = activeSection._id || activeSection.id || activeSection.section_id;
+        const content = sectionContents[sectionId] || '';
+        saveSection(sectionId, content);
+      }
+    },
+    onToggleFullscreen: () => setFullscreenMode(prev => !prev),
+    onShowHelp: () => setShowShortcutsHelp(true),
+    onEscape: () => {
+      if (showExportModal) setShowExportModal(false);
+      else if (showPublishModal) setShowPublishModal(false);
+      else if (showShortcutsHelp) setShowShortcutsHelp(false);
+    },
+    enabled: !loading
+  });
 
   // Fetch tender and proposal on mount
   useEffect(() => {
@@ -41,25 +125,20 @@ export default function ProposalWorkspace() {
         setLoading(true);
         setError(null);
 
-        // Fetch tender details
         const tenderRes = await tenderService.getTenderFullDetails(tenderId);
         const tenderData = tenderRes.data?.data?.tender || tenderRes.data?.tender;
         setTender(tenderData);
 
-        // Fetch or create proposal
         let proposalData = null;
         try {
           const proposalRes = await proposalService.getProposalByTenderId(tenderId);
           proposalData = proposalRes.data?.data?.proposal || proposalRes.data?.proposal;
         } catch (err) {
-          // Create new proposal if it doesn't exist (404 expected for new proposals)
           if (err.response?.status === 404) {
             try {
               const newProposalRes = await proposalService.createProposal(tenderId);
               proposalData = newProposalRes.data?.data?.proposal || newProposalRes.data?.proposal;
             } catch (createErr) {
-              // If creation fails because it already exists (race condition in StrictMode),
-              // try fetching again
               if (createErr.response?.status === 400 && createErr.response?.data?.error?.includes('already exists')) {
                 const retryRes = await proposalService.getProposalByTenderId(tenderId);
                 proposalData = retryRes.data?.data?.proposal || retryRes.data?.proposal;
@@ -74,11 +153,9 @@ export default function ProposalWorkspace() {
 
         setProposal(proposalData);
 
-        // Set sections from tender
         const tenderSections = tenderRes.data?.data?.sections || tenderRes.data?.sections || [];
         setSections(tenderSections);
 
-        // Load existing section contents from proposal
         if (proposalData?.sections) {
           const contents = {};
           proposalData.sections.forEach(ps => {
@@ -87,10 +164,11 @@ export default function ProposalWorkspace() {
           setSectionContents(contents);
         }
 
-        // Set first section as active
         if (tenderSections.length > 0) {
           setActiveSection(tenderSections[0]);
         }
+
+        announce('Proposal workspace loaded');
       } catch (err) {
         console.error('Failed to fetch data:', err);
         setError(err.response?.data?.message || 'Failed to load proposal workspace');
@@ -114,6 +192,7 @@ export default function ProposalWorkspace() {
   // Handle section selection
   const handleSelectSection = (section) => {
     setActiveSection(section);
+    announce(`Selected section: ${section.title || section.name}`);
   };
 
   // Handle content change with auto-save debounce
@@ -122,18 +201,15 @@ export default function ProposalWorkspace() {
 
     const sectionId = activeSection._id || activeSection.id || activeSection.section_id;
 
-    // Update content
     setSectionContents(prev => ({
       ...prev,
       [sectionId]: value
     }));
 
-    // Clear existing timer
     if (autoSaveTimers.current[sectionId]) {
       clearTimeout(autoSaveTimers.current[sectionId]);
     }
 
-    // Set new timer for auto-save (2 seconds after user stops typing)
     setSavingStatus(prev => ({
       ...prev,
       [sectionId]: 'saving'
@@ -142,58 +218,70 @@ export default function ProposalWorkspace() {
     autoSaveTimers.current[sectionId] = setTimeout(async () => {
       await saveSection(sectionId, value);
     }, 2000);
+
+    // Save to offline storage
+    if (!isOnline) {
+      saveOffline({
+        tenderId,
+        proposalId: proposal._id || proposal.proposal_id,
+        sectionId,
+        content: value
+      });
+    }
   };
 
-  // Save section content (called by auto-save or manual save)
+  // Save section content
   const saveSection = async (sectionId, content) => {
     if (!proposal || proposal.status !== 'DRAFT') {
-      setSavingStatus(prev => ({
-        ...prev,
-        [sectionId]: null
-      }));
+      setSavingStatus(prev => ({ ...prev, [sectionId]: null }));
       return;
     }
 
     try {
-      setSavingStatus(prev => ({
-        ...prev,
-        [sectionId]: 'saving'
-      }));
+      setSavingStatus(prev => ({ ...prev, [sectionId]: 'saving' }));
 
       const proposalId = proposal._id || proposal.proposal_id;
       await proposalService.updateProposalSection(proposalId, sectionId, content);
 
-      setLastSaved(prev => ({
-        ...prev,
-        [sectionId]: new Date()
-      }));
+      setLastSaved(prev => ({ ...prev, [sectionId]: new Date() }));
+      setSavingStatus(prev => ({ ...prev, [sectionId]: 'saved' }));
+      announceSaved();
 
-      setSavingStatus(prev => ({
-        ...prev,
-        [sectionId]: 'saved'
-      }));
-
-      // Clear saved status after 2 seconds
       setTimeout(() => {
-        setSavingStatus(prev => ({
-          ...prev,
-          [sectionId]: null
-        }));
+        setSavingStatus(prev => ({ ...prev, [sectionId]: null }));
       }, 2000);
     } catch (err) {
       console.error('Failed to save section:', err);
-      setSavingStatus(prev => ({
-        ...prev,
-        [sectionId]: null
-      }));
+      setSavingStatus(prev => ({ ...prev, [sectionId]: null }));
+      announce('Failed to save changes', 'assertive');
+    }
+  };
+
+  // Handle export
+  const handleExport = async ({ format, template }) => {
+    try {
+      setIsExporting(true);
+      announce(`Exporting proposal as ${format.toUpperCase()}`);
+
+      const proposalId = proposal._id || proposal.proposal_id;
+      const blob = await proposalExportService.exportProposal(proposalId, { format, template });
+      const filename = proposalExportService.generateFilename(proposal, tender, format);
+      proposalExportService.downloadBlob(blob, filename);
+
+      setShowExportModal(false);
+      announce('Export completed successfully');
+    } catch (err) {
+      console.error('Export failed:', err);
+      announce('Export failed. Please try again.', 'assertive');
+    } finally {
+      setIsExporting(false);
     }
   };
 
   // Handle proposal submission
   const handleSubmitProposal = async () => {
     const mandatorySections = sections.filter(s => s.is_mandatory || s.mandatory);
-    
-    // Frontend validation (informational - backend is the authoritative validator)
+
     const incompleteOnFrontend = mandatorySections.filter(s => {
       const content = sectionContents[s._id || s.id || s.section_id] || '';
       return content.trim().length < 50;
@@ -208,72 +296,42 @@ export default function ProposalWorkspace() {
       return;
     }
 
-    if (!window.confirm(
-      '⚠️ Final Confirmation\n\n' +
-      'You are about to submit this proposal. Once submitted:\n\n' +
-      '• Your proposal will be locked\n' +
-      '• You CANNOT edit it anymore\n' +
-      '• It will be sent for evaluation\n\n' +
-      'Continue?'
-    )) {
-      return;
-    }
+    setShowPublishModal(true);
+  };
 
+  // Confirm and publish
+  const handleConfirmPublish = async () => {
     try {
-      setSubmitting(true);
+      setIsPublishing(true);
       const proposalId = proposal._id || proposal.proposal_id;
-      
-      const response = await proposalService.submitProposal(proposalId);
-      
-      // Success - update local proposal status
+
+      await proposalService.submitProposal(proposalId);
+
       setProposal(prev => ({
         ...prev,
         status: 'SUBMITTED',
         submittedAt: new Date().toISOString()
       }));
 
-      // Show success message
-      alert(
-        '✅ Proposal Submitted Successfully!\n\n' +
-        'Your proposal has been submitted and is now locked for editing.\n' +
-        'You will be redirected to the proposal list.'
-      );
+      setShowPublishModal(false);
+      announce('Proposal published successfully!');
 
-      // Redirect to proposal list
       setTimeout(() => {
         navigate('/bidder/proposal-drafting');
       }, 1500);
-      
+
     } catch (err) {
       console.error('Failed to submit proposal:', err);
-      
-      // Handle validation errors from backend
       const errorData = err.response?.data;
-      
+
       if (errorData?.error === 'Proposal incomplete' && errorData?.incompleteSections) {
-        const incompleteDetails = errorData.incompleteSections
-          .map(s => `• ${s.title} (${s.contentLength} / 50 characters)`)
-          .join('\n');
-        
-        alert(
-          `❌ Cannot Submit - Proposal Incomplete\n\n` +
-          `${errorData.details}\n\n${incompleteDetails}\n\n` +
-          `Please complete these sections and try again.`
-        );
-      } else if (errorData?.error === 'Proposal locked' || errorData?.error === 'Proposal already submitted') {
-        alert(
-          `⛔ Proposal Locked\n\n` +
-          `This proposal has already been submitted and cannot be edited or re-submitted.\n\n` +
-          `You will be redirected to the proposal list.`
-        );
-        setTimeout(() => {
-          navigate('/bidder/proposal-drafting');
-        }, 2000);
+        alert(`❌ Cannot Submit - Proposal Incomplete\n\n${errorData.details}`);
       } else {
-        alert(`❌ Submission Failed\n\n${errorData?.details || err.message || 'An error occurred. Please try again.'}`);
+        alert(`❌ Submission Failed\n\n${errorData?.details || err.message || 'An error occurred.'}`);
       }
+      announce('Failed to publish proposal', 'assertive');
     } finally {
-      setSubmitting(false);
+      setIsPublishing(false);
     }
   };
 
@@ -316,127 +374,160 @@ export default function ProposalWorkspace() {
   const isProposalSubmitted = proposal?.status === 'SUBMITTED';
 
   return (
-    <BidderLayout showNavbar={!fullscreenMode}>
-      <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
-        {/* Submission Lock Banner */}
-        {isProposalSubmitted && (
-          <div className="flex-shrink-0 bg-amber-50 border-b-2 border-amber-300 px-4 py-3 flex items-center gap-3">
-            <div className="flex-1">
-              <p className="text-amber-900 font-semibold text-sm">
-                🔒 Proposal Submitted & Locked
-              </p>
-              <p className="text-amber-700 text-xs mt-1">
-                This proposal has been submitted successfully. It is now locked for editing and cannot be modified.
-                {proposal?.submittedAt && ` Submitted on ${new Date(proposal.submittedAt).toLocaleString()}`}
-              </p>
-            </div>
-            <button
-              onClick={() => navigate('/bidder/proposal-drafting')}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition flex-shrink-0"
-            >
-              Back to List
-            </button>
-          </div>
-        )}
+    <ProposalThemeProvider>
+      <BidderLayout showNavbar={!fullscreenMode}>
+        {/* Accessibility Announcer */}
+        <A11yAnnouncer ref={announcerRef} />
 
-        {/* Top Controls Bar */}
-        <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 flex-shrink-0">
-          <button
-            onClick={() => navigate('/bidder/proposal-drafting')}
-            className="flex items-center gap-2 text-slate-600 hover:text-slate-900 font-medium text-sm transition px-3 py-2 rounded-lg hover:bg-slate-100"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </button>
+        {/* Offline Banner */}
+        <OfflineBanner isOnline={isOnline} pendingChanges={pendingChanges} />
 
-          {/* Control Buttons */}
-          <div className="flex items-center gap-2">
-            {/* Toggle Sidebar */}
-            <button
-              onClick={() => setShowSidebar(!showSidebar)}
-              className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-sm font-medium transition"
-              title={showSidebar ? "Hide sections panel" : "Show sections panel"}
-            >
-              <Menu className="w-4 h-4" />
-              <span className="text-xs hidden sm:inline">{showSidebar ? 'Sections' : 'Sections'}</span>
-            </button>
-
-            {/* Toggle AI Advisor */}
-            <button
-              onClick={() => setShowAIAdvisor(!showAIAdvisor)}
-              className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-sm font-medium transition"
-              title={showAIAdvisor ? "Hide AI advisor" : "Show AI advisor"}
-            >
-              <span className="text-xs">{showAIAdvisor ? 'AI ✓' : 'AI ✗'}</span>
-            </button>
-
-            {/* Fullscreen Toggle */}
-            <button
-              onClick={() => setFullscreenMode(!fullscreenMode)}
-              className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-sm font-medium transition"
-              title={fullscreenMode ? "Exit fullscreen" : "Enter fullscreen"}
-            >
-              {fullscreenMode ? (
-                <Minimize2 className="w-4 h-4" />
-              ) : (
-                <Maximize2 className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Header */}
-        <ProposalHeader
-          tender={tender}
-          proposal={proposal}
-          completionPercent={completionPercent}
-          completedSections={completedCount}
-          totalSections={sections.length}
-          onSubmit={handleSubmitProposal}
-          submitting={submitting}
-        />
-
-        {/* Three-Column Layout */}
-        <div className="flex-1 flex overflow-hidden gap-0">
-          {/* Left: Section List - Collapsible */}
-          {showSidebar && (
-            <div className="w-64 lg:w-72 flex-shrink-0 border-r border-slate-200 flex flex-col">
-              <SectionList
-                sections={sections}
-                activeSection={activeSection}
-                onSelectSection={handleSelectSection}
-                sectionCompletion={sectionContents}
-              />
+        <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
+          {/* Submission Lock Banner */}
+          {isProposalSubmitted && (
+            <div className="flex-shrink-0 bg-amber-50 border-b-2 border-amber-300 px-4 py-3 flex items-center gap-3">
+              <div className="flex-1">
+                <p className="text-amber-900 font-semibold text-sm">
+                  🔒 Proposal Submitted & Locked
+                </p>
+                <p className="text-amber-700 text-xs mt-1">
+                  This proposal has been submitted successfully. It is now locked for editing.
+                  {proposal?.submittedAt && ` Submitted on ${new Date(proposal.submittedAt).toLocaleString()}`}
+                </p>
+              </div>
+              <button
+                onClick={() => navigate('/bidder/proposal-drafting')}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition flex-shrink-0"
+              >
+                Back to List
+              </button>
             </div>
           )}
 
-          {/* Center: Proposal Editor - Main Content */}
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {activeSection ? (
-              <ProposalEditor
-                section={activeSection}
-                content={sectionContents[activeSectionId] || ''}
-                onContentChange={handleContentChange}
-                isReadOnly={proposal?.status !== 'DRAFT'}
-                savingStatus={savingStatus[activeSectionId]}
-                lastSaved={lastSaved[activeSectionId]}
+          {/* Top Controls Bar */}
+          <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 flex-shrink-0">
+            <button
+              onClick={() => navigate('/bidder/proposal-drafting')}
+              className="flex items-center gap-2 text-slate-600 hover:text-slate-900 font-medium text-sm transition px-3 py-2 rounded-lg hover:bg-slate-100"
+              aria-label="Go back to proposals list"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </button>
+
+            {/* Control Buttons */}
+            <div className="flex items-center gap-2">
+              {/* Offline Indicator */}
+              <OfflineIndicator
+                isOnline={isOnline}
+                isSyncing={isSyncing}
+                pendingChanges={pendingChanges}
+                lastSynced={lastSynced}
+                onSyncClick={forceSync}
+                variant="compact"
               />
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-slate-500">
-                <p>No section selected</p>
-              </div>
-            )}
+
+              {/* Version History */}
+              <VersionHistory
+                versions={[{
+                  version: proposal?.version || 1,
+                  status: proposal?.status || 'DRAFT',
+                  createdAt: proposal?.createdAt,
+                  updatedAt: proposal?.updatedAt,
+                  isCurrent: true
+                }]}
+                currentVersion={proposal?.version || 1}
+              />
+
+              {/* Export Button */}
+              <ExportButtons
+                onExportPDF={() => handleExport({ format: 'pdf', template: 'formal' })}
+                onExportDOCX={() => handleExport({ format: 'docx', template: 'formal' })}
+                onOpenExportModal={() => setShowExportModal(true)}
+                disabled={isProposalSubmitted}
+                isExporting={isExporting}
+              />
+
+              {/* Theme Toggle */}
+              <ThemeToggle variant="icon" size="sm" />
+
+              {/* Keyboard Shortcuts */}
+              <button
+                onClick={() => setShowShortcutsHelp(true)}
+                className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition"
+                aria-label="Show keyboard shortcuts"
+                title="Keyboard shortcuts (?)"
+              >
+                <Keyboard className="w-4 h-4" />
+              </button>
+
+              {/* Toggle Sidebar */}
+              <button
+                onClick={() => setShowSidebar(!showSidebar)}
+                className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-sm font-medium transition"
+                title={showSidebar ? "Hide sections panel" : "Show sections panel"}
+                aria-pressed={showSidebar}
+              >
+                <Menu className="w-4 h-4" />
+              </button>
+
+              {/* Toggle AI Advisor */}
+              <button
+                onClick={() => setShowAIAdvisor(!showAIAdvisor)}
+                className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-sm font-medium transition"
+                title={showAIAdvisor ? "Hide AI advisor" : "Show AI advisor"}
+                aria-pressed={showAIAdvisor}
+              >
+                <span className="text-xs">{showAIAdvisor ? 'AI ✓' : 'AI ✗'}</span>
+              </button>
+
+              {/* Fullscreen Toggle */}
+              <button
+                onClick={() => setFullscreenMode(!fullscreenMode)}
+                className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-sm font-medium transition"
+                title={fullscreenMode ? "Exit fullscreen" : "Enter fullscreen"}
+                aria-pressed={fullscreenMode}
+              >
+                {fullscreenMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              </button>
+            </div>
           </div>
 
-          {/* Right: AI Advisor - Collapsible */}
-          {showAIAdvisor && (
-            <div className="w-80 lg:w-96 flex-shrink-0 border-l border-slate-200 flex flex-col">
+          {/* Header */}
+          <ProposalHeader
+            tender={tender}
+            proposal={proposal}
+            completionPercent={completionPercent}
+            completedSections={completedCount}
+            totalSections={sections.length}
+            onSubmit={handleSubmitProposal}
+            submitting={submitting}
+          />
+
+          {/* Three-Column Layout */}
+          <div className="flex-1 flex overflow-hidden gap-0">
+            {/* Left: Section List */}
+            {showSidebar && (
+              <div className="w-64 lg:w-72 flex-shrink-0 border-r border-slate-200 flex flex-col">
+                <SectionList
+                  sections={sections}
+                  activeSection={activeSection}
+                  onSelectSection={handleSelectSection}
+                  sectionCompletion={sectionContents}
+                />
+              </div>
+            )}
+
+            {/* Center: Proposal Editor */}
+            <div className="flex-1 flex flex-col overflow-hidden">
               {activeSection ? (
-                <ProposalAIAdvisor
-                  proposal={proposal}
+                <ProposalEditor
                   section={activeSection}
-                  bidderDraft={sectionContents[activeSectionId] || ''}
-                  tenderRequirement={activeSection?.description || activeSection?.content || ''}
+                  content={sectionContents[activeSectionId] || ''}
+                  onContentChange={handleContentChange}
+                  isReadOnly={proposal?.status !== 'DRAFT'}
+                  savingStatus={savingStatus[activeSectionId]}
+                  lastSaved={lastSaved[activeSectionId]}
                 />
               ) : (
                 <div className="flex-1 flex items-center justify-center text-slate-500">
@@ -444,9 +535,56 @@ export default function ProposalWorkspace() {
                 </div>
               )}
             </div>
-          )}
+
+            {/* Right: AI Advisor */}
+            {showAIAdvisor && (
+              <div className="w-80 lg:w-96 flex-shrink-0 border-l border-slate-200 flex flex-col">
+                {activeSection ? (
+                  <ProposalAIAdvisor
+                    proposal={proposal}
+                    section={activeSection}
+                    bidderDraft={sectionContents[activeSectionId] || ''}
+                    tenderRequirement={activeSection?.description || activeSection?.content || ''}
+                  />
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-slate-500">
+                    <p>No section selected</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    </BidderLayout>
+
+        {/* Export Modal */}
+        <ExportModal
+          isOpen={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          onExport={handleExport}
+          proposal={proposal}
+          tender={tender}
+          isExporting={isExporting}
+        />
+
+        {/* Publish Confirmation Modal */}
+        <PublishConfirmModal
+          isOpen={showPublishModal}
+          onClose={() => setShowPublishModal(false)}
+          onConfirm={handleConfirmPublish}
+          proposal={proposal}
+          tender={tender}
+          completedSections={completedCount}
+          totalSections={sections.length}
+          isPublishing={isPublishing}
+        />
+
+        {/* Keyboard Shortcuts Help Modal */}
+        <ShortcutsHelpModal
+          isOpen={showShortcutsHelp}
+          onClose={() => setShowShortcutsHelp(false)}
+          shortcuts={shortcuts}
+        />
+      </BidderLayout>
+    </ProposalThemeProvider>
   );
 }

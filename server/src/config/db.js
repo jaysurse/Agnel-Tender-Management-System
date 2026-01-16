@@ -3,18 +3,10 @@ import { env, loadEnv } from './env.js';
 
 loadEnv();
 
-const poolConfig = {
-  host: env.DB_HOST,
-  port: Number(env.DB_PORT),
-  database: env.DB_NAME,
-  user: env.DB_USER,
-  password: env.DB_PASSWORD,
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-};
-
-export const pool = new Pool(poolConfig);
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
 pool.on('connect', () => {
   console.log('[DB] Connection established to PostgreSQL');
