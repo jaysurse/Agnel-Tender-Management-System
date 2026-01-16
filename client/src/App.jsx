@@ -24,6 +24,7 @@ import BidderTenderDiscovery from "./pages/bidder/BidderTenderDiscovery";
 import TenderAnalysis from "./pages/bidder/TenderAnalysis";
 import ProposalEdit from "./pages/bidder/ProposalEdit";
 import ProposalWorkspace from "./pages/bidder/ProposalWorkspace";
+import ProposalPublishedView from "./pages/bidder/ProposalPublishedView";
 import ProposalDrafting from "./pages/bidder/ProposalDrafting";
 import BidderHistory from "./pages/bidder/BidderHistory";
 import AnalyzePage from "./pages/bidder/AnalyzePage";
@@ -85,6 +86,7 @@ export default function App() {
             <Route path="/bidder/tenders/:id/analyze" element={<TenderAnalysis />} />
             <Route path="/bidder/proposals/:id" element={<ProposalEdit />} />
             <Route path="/bidder/proposal/:tenderId" element={<ProposalWorkspace />} />
+            <Route path="/bidder/proposal/published/:proposalId" element={<ProposalPublishedView />} />
             <Route path="/bidder/proposal-drafting" element={<ProposalDrafting />} />
             <Route path="/bidder/history" element={<BidderHistory />} />
           </Route>

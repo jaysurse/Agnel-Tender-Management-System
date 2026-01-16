@@ -3,6 +3,10 @@ import { env, loadEnv } from './env.js';
 
 loadEnv();
 
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 // Parse the DATABASE_URL to extract components
 const url = new URL(env.DATABASE_URL);
 
