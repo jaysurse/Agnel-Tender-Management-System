@@ -161,9 +161,14 @@ export default function PDFTenderAnalysis() {
     setError(null);
 
     try {
+      // Generate sessionId from analysis timestamp
+      const sessionId = analysis.analysisId || `session-${Date.now()}`;
+
+      // Send ONLY minimal data - no large payloads
       const result = await pdfAnalysisService.evaluateProposal(
+        sessionId,
         { sections: proposalSections },
-        analysis
+        null // tenderId optional
       );
 
       if (result.success) {

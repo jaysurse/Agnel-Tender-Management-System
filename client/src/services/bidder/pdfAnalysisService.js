@@ -34,14 +34,25 @@ export const pdfAnalysisService = {
 
   /**
    * Evaluate a proposal against tender requirements
-   * @param {Object} proposal - Proposal with sections
-   * @param {Object} tenderAnalysis - Original tender analysis
+   * UPDATED: Sends only sessionId and minimal proposal data (no large payloads)
+   * @param {string} sessionId - Analysis session ID
+   * @param {Object} proposal - Minimal proposal with sections [{id, title, content}]
+   * @param {string} tenderId - Optional tender ID for reference
    * @returns {Promise<Object>} Evaluation results
    */
-  async evaluateProposal(proposal, tenderAnalysis) {
+  async evaluateProposal(sessionId, proposal, tenderId = null) {
+    // Send ONLY minimal data - backend loads context internally
     const response = await api.post('/pdf/evaluate', {
-      proposal,
-      tenderAnalysis,
+      sessionId,
+      proposal: {
+        sections: proposal.sections.map(s => ({
+          id: s.id,
+          title: s.title,
+          content: s.content,
+          wordCount: s.wordCount,
+        })),
+      },
+      tenderId,
     });
     return response.data;
   },
