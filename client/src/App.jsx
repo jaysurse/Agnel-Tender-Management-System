@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import PublicLayout from "./layouts/PublicLayout";
 import AdminLayout from "./layouts/AdminLayout";
+import AssisterLayout from "./layouts/AssisterLayout";
 import ProtectedRoute from "./components/shared/ProtectedRoute";
 import { AuthProvider } from "./context/AuthContext";
 
@@ -27,7 +28,7 @@ import ProposalWorkspace from "./pages/bidder/ProposalWorkspace";
 import ProposalPublishedView from "./pages/bidder/ProposalPublishedView";
 import ProposalDrafting from "./pages/bidder/ProposalDrafting";
 import BidderHistory from "./pages/bidder/BidderHistory";
-import AnalyzePage from "./pages/bidder/AnalyzePage";
+
 import SavedTendersPage from "./pages/bidder/SavedTendersPage";
 import BidderProfile from "./pages/bidder/BidderProfile";
 import PDFTenderAnalysis from "./pages/bidder/PDFTenderAnalysis";
@@ -38,6 +39,7 @@ import Analytics from "./pages/admin/Analytics/Analytics";
 import Profile from "./pages/admin/Profile/Profile";
 import BidEvaluationList from "./pages/admin/BidEvaluation/BidEvaluationList";
 import BidEvaluation from "./pages/admin/BidEvaluation/BidEvaluation";
+import AssisterDashboard from "./pages/assister/AssisterDashboard";
 
 // Landing Page Component
 function LandingPage() {
@@ -87,7 +89,7 @@ export default function App() {
           <Route element={<ProtectedRoute allowedRoles={["bidder"]} />}>
             <Route path="/bidder/dashboard" element={<BidderDashboard />} />
             <Route path="/bidder/tenders" element={<BidderTenderDiscovery />} />
-            <Route path="/bidder/analyze" element={<AnalyzePage />} />
+           
             <Route path="/bidder/tenders/:id/analyze" element={<TenderAnalysis />} />
             <Route path="/bidder/proposals/:id" element={<ProposalEdit />} />
             <Route path="/bidder/proposal/:tenderId" element={<ProposalWorkspace />} />
@@ -100,6 +102,13 @@ export default function App() {
             <Route path="/bidder/uploaded-tenders/:id/analyze" element={<UploadedTenderAnalysis />} />
             <Route path="/bidder/proposal/:tenderId/collaborate" element={<CollaborativeProposalWorkspace />} />
             <Route path="/bidder/uploaded-tenders/:uploadedTenderId/collaborate" element={<CollaborativeProposalWorkspace />} />
+          </Route>
+
+          {/* Assister Routes - Protected with assister role */}
+          <Route element={<ProtectedRoute allowedRoles={["assister"]} />}>
+            <Route path="/assister" element={<AssisterLayout />}>
+              <Route path="dashboard" element={<AssisterDashboard />} />
+            </Route>
           </Route>
 
           {/* Fallback */}
