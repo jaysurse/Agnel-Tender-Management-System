@@ -6,6 +6,7 @@ import SectionList from '../../components/proposal/SectionList';
 import ProposalEditor from '../../components/proposal/ProposalEditor';
 import ProposalAIAdvisor from '../../components/proposal/ProposalAIAdvisor';
 import Loading from '../../components/bidder-common/Loading';
+import AssignAssisterModal from '../../components/bidder/AssignAssisterModal';
 
 // New Components
 import { ProposalThemeProvider } from '../../context/ProposalThemeContext';
@@ -30,7 +31,12 @@ import { tenderService } from '../../services/bidder/tenderService';
 import { proposalService } from '../../services/bidder/proposalService';
 import proposalExportService from '../../services/bidder/proposalExportService';
 
+// Icons
+import { ArrowLeft, Menu, Maximize2, Minimize2, Keyboard, FileText } from 'lucide-react';
+import { ArrowLeft, Menu, Maximize2, Minimize2, Keyboard, Shield, Clock } from 'lucide-react';
 
+// Insight Components
+import { RiskScoreCard, AuditTrail } from '../../components/insights';
 
 // Styles
 import '../../styles/proposal-theme.css';
@@ -64,8 +70,11 @@ export default function ProposalWorkspace() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [showAssignAssisterModal, setShowAssignAssisterModal] = useState(false);
+  const [selectedSectionForAssignment, setSelectedSectionForAssignment] = useState(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [showInsightsPanel, setShowInsightsPanel] = useState(false); // Risk & Audit panel
 
   // Accessibility announcements
   const { announce, announceSaved } = useA11yAnnounce();
@@ -192,6 +201,19 @@ export default function ProposalWorkspace() {
   const handleSelectSection = (section) => {
     setActiveSection(section);
     announce(`Selected section: ${section.title || section.name}`);
+  };
+
+  // Handle assign assister
+  const handleOpenAssignAssisterModal = () => {
+    if (activeSection) {
+      setSelectedSectionForAssignment(activeSection);
+      setShowAssignAssisterModal(true);
+    }
+  };
+
+  const handleAssignAssisterSuccess = (data) => {
+    announce(`Assister ${data.user.name} assigned with ${data.permission === 'EDIT' ? 'edit' : 'comment-only'} permission`);
+    // Optionally refresh collaboration data or show confirmation
   };
 
   // Handle content change with auto-save debounce
@@ -447,6 +469,26 @@ export default function ProposalWorkspace() {
                 isExporting={isExporting}
               />
 
+              {/* Assign Assister Button */}
+              <button
+                onClick={handleOpenAssignAssisterModal}
+                disabled={isProposalSubmitted || !activeSection}
+                className="flex items-center gap-2 px-3 py-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Assign an assister to this section"
+              >
+                👥 Assign
+              </button>
+
+              {/* PDF Analyze & Collaboration */}
+              <button
+                onClick={() => navigate(`/bidder/pdf-analyze?tenderId=${tenderId}&proposalId=${proposalId}`)}
+                className="flex items-center gap-2 px-3 py-2 text-white bg-primary-600 hover:bg-primary-700 rounded-lg text-sm font-medium transition"
+                title="Open PDF Analyze & Collaboration"
+              >
+                <FileText className="w-4 h-4" />
+                PDF Analyze
+              </button>
+
               {/* Theme Toggle */}
               <ThemeToggle variant="icon" size="sm" />
 
@@ -478,6 +520,21 @@ export default function ProposalWorkspace() {
                 aria-pressed={showAIAdvisor}
               >
                 <span className="text-xs">{showAIAdvisor ? 'AI ✓' : 'AI ✗'}</span>
+              </button>
+
+              {/* Toggle Risk & Audit Panel */}
+              <button
+                onClick={() => setShowInsightsPanel(!showInsightsPanel)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                  showInsightsPanel
+                    ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+                title={showInsightsPanel ? "Hide risk & audit panel" : "Show risk & audit panel"}
+                aria-pressed={showInsightsPanel}
+              >
+                <Shield className="w-4 h-4" />
+                <span className="text-xs">Risk</span>
               </button>
 
               {/* Fullscreen Toggle */}
@@ -552,6 +609,42 @@ export default function ProposalWorkspace() {
                 )}
               </div>
             )}
+
+            {/* Right: Risk & Audit Panel */}
+            {showInsightsPanel && (
+              <div className="w-80 lg:w-96 flex-shrink-0 border-l border-slate-200 flex flex-col bg-slate-50 overflow-y-auto">
+                <div className="p-4 space-y-4">
+                  {/* Panel Header */}
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+                    <Shield className="w-5 h-5 text-amber-600" />
+                    <h3 className="font-semibold text-slate-900">Risk & Compliance</h3>
+                  </div>
+
+                  {/* Risk Score Card */}
+                  {proposal && (proposal._id || proposal.proposal_id) && (
+                    <RiskScoreCard
+                      proposalId={proposal._id || proposal.proposal_id}
+                      compact={true}
+                    />
+                  )}
+
+                  {/* Audit Trail */}
+                  <div className="pt-2">
+                    <div className="flex items-center gap-2 pb-2 border-b border-slate-200">
+                      <Clock className="w-5 h-5 text-blue-600" />
+                      <h3 className="font-semibold text-slate-900">Activity Log</h3>
+                    </div>
+                  </div>
+                  {proposal && (proposal._id || proposal.proposal_id) && (
+                    <AuditTrail
+                      proposalId={proposal._id || proposal.proposal_id}
+                      compact={true}
+                      maxItems={8}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -582,6 +675,16 @@ export default function ProposalWorkspace() {
           isOpen={showShortcutsHelp}
           onClose={() => setShowShortcutsHelp(false)}
           shortcuts={shortcuts}
+        />
+
+        {/* Assign Assister Modal */}
+        <AssignAssisterModal
+          isOpen={showAssignAssisterModal}
+          onClose={() => setShowAssignAssisterModal(false)}
+          sectionId={selectedSectionForAssignment?._id || selectedSectionForAssignment?.id || selectedSectionForAssignment?.section_id}
+          sectionTitle={selectedSectionForAssignment?.title || selectedSectionForAssignment?.name || 'Section'}
+          proposalId={proposal?._id || proposal?.proposal_id}
+          onAssignSuccess={handleAssignAssisterSuccess}
         />
       </BidderLayout>
     </ProposalThemeProvider>
