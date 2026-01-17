@@ -8,6 +8,42 @@ import { PDFParserService } from './pdfParser.service.js';
 import { ChunkingService } from './chunking.service.js';
 
 const GROQ_MODEL = env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_FALLBACK_MODEL = 'llama-3.1-8b-instant'; // Smaller model for rate limit fallback
+const OPENAI_MODEL = env.OPENAI_CHAT_MODEL || 'gpt-3.5-turbo';
+
+/**
+ * Call OpenAI Chat Completion API (fallback)
+ */
+async function callOpenAI(systemPrompt, userPrompt, options = {}) {
+  if (!env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is not configured');
+  }
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: options.model || OPENAI_MODEL,
+      temperature: options.temperature || 0.3,
+      max_tokens: options.maxTokens || 4000,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`OpenAI API failed: ${response.status} - ${errorBody}`);
+  }
+
+  const data = await response.json();
+  return data?.choices?.[0]?.message?.content?.trim() || '';
+}
 
 /**
  * Call GROQ Chat Completion API
@@ -36,6 +72,10 @@ async function callGroq(systemPrompt, userPrompt, options = {}) {
 
   if (!response.ok) {
     const errorBody = await response.text();
+    // Check for rate limit error
+    if (response.status === 429) {
+      throw new Error(`GROQ_RATE_LIMIT: ${errorBody}`);
+    }
     throw new Error(`GROQ API failed: ${response.status} - ${errorBody}`);
   }
 
@@ -44,11 +84,64 @@ async function callGroq(systemPrompt, userPrompt, options = {}) {
 }
 
 /**
- * Parse JSON from LLM response (handles markdown code blocks)
+ * Truncate prompt for smaller models (max ~4000 chars to stay under token limits)
+ */
+function truncateForSmallModel(prompt) {
+  if (prompt.length <= 4000) return prompt;
+  // Keep first 2000 and last 1500 chars for context
+  return prompt.substring(0, 2000) + '\n\n[...content truncated...]\n\n' + prompt.substring(prompt.length - 1500);
+}
+
+/**
+ * Call LLM with automatic fallback chain:
+ * 1. GROQ main model (llama-3.3-70b-versatile)
+ * 2. GROQ fallback model (llama-3.1-8b-instant) - if rate limited (with truncated prompt)
+ * 3. OpenAI (gpt-3.5-turbo) - if GROQ fails
+ */
+async function callLLM(systemPrompt, userPrompt, options = {}) {
+  // Try GROQ main model first (faster and cheaper)
+  try {
+    if (env.GROQ_API_KEY) {
+      console.log('[PDF Analysis] Calling GROQ API (main model)...');
+      return await callGroq(systemPrompt, userPrompt, options);
+    }
+  } catch (err) {
+    console.warn('[PDF Analysis] GROQ main model failed:', err.message);
+
+    // If rate limited, try the smaller fallback model with truncated prompt
+    if (err.message.includes('GROQ_RATE_LIMIT')) {
+      try {
+        console.log('[PDF Analysis] Trying GROQ fallback model (8b) with truncated prompt...');
+        const truncatedPrompt = truncateForSmallModel(userPrompt);
+        const truncatedSystem = systemPrompt.substring(0, 500) + '\n\nIMPORTANT: Respond ONLY with valid JSON, no explanations.';
+        return await callGroq(truncatedSystem, truncatedPrompt, {
+          ...options,
+          model: GROQ_FALLBACK_MODEL,
+          maxTokens: Math.min(options.maxTokens || 2000, 2000) // Limit output tokens too
+        });
+      } catch (fallbackErr) {
+        console.warn('[PDF Analysis] GROQ fallback model failed:', fallbackErr.message);
+      }
+    }
+  }
+
+  // Fallback to OpenAI
+  if (env.OPENAI_API_KEY) {
+    console.log('[PDF Analysis] Falling back to OpenAI API...');
+    return await callOpenAI(systemPrompt, userPrompt, options);
+  }
+
+  throw new Error('No LLM API configured (GROQ or OpenAI)');
+}
+
+/**
+ * Parse JSON from LLM response (handles markdown code blocks and common issues)
  */
 function parseJSON(response) {
   try {
     let cleaned = response.trim();
+
+    // Remove markdown code blocks
     if (cleaned.startsWith('```json')) {
       cleaned = cleaned.slice(7);
     } else if (cleaned.startsWith('```')) {
@@ -57,9 +150,41 @@ function parseJSON(response) {
     if (cleaned.endsWith('```')) {
       cleaned = cleaned.slice(0, -3);
     }
-    return JSON.parse(cleaned.trim());
+    cleaned = cleaned.trim();
+
+    // Try to extract JSON object if there's extra text
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      cleaned = jsonMatch[0];
+    }
+
+    // Fix common JSON issues from LLMs
+    // Remove control characters that break JSON parsing
+    cleaned = cleaned.replace(/[\x00-\x1F\x7F]/g, (char) => {
+      if (char === '\n' || char === '\r' || char === '\t') return char;
+      return ' ';
+    });
+
+    // Fix unescaped newlines in strings
+    cleaned = cleaned.replace(/([^\\])\\n/g, '$1\\\\n');
+
+    return JSON.parse(cleaned);
   } catch (err) {
     console.error('Failed to parse JSON:', err.message);
+    // Try one more time with more aggressive cleaning
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const aggressive = jsonMatch[0]
+          .replace(/[\x00-\x1F\x7F]/g, ' ')
+          .replace(/\n/g, ' ')
+          .replace(/\r/g, ' ')
+          .replace(/\t/g, ' ');
+        return JSON.parse(aggressive);
+      }
+    } catch (e) {
+      console.error('Aggressive JSON parse also failed:', e.message);
+    }
     return null;
   }
 }
@@ -174,7 +299,7 @@ Respond in this exact JSON format:
   "actionItems": ["action 1", "action 2", "..."]
 }`;
 
-    const response = await callGroq(systemPrompt, userPrompt, { temperature: 0.2, maxTokens: 3000 });
+    const response = await callLLM(systemPrompt, userPrompt, { temperature: 0.2, maxTokens: 3000 });
     const summaryData = parseJSON(response);
 
     if (!summaryData) {
@@ -279,7 +404,7 @@ Generate a proposal draft with the following sections in JSON format:
   }
 }`;
 
-    const response = await callGroq(systemPrompt, userPrompt, { temperature: 0.4, maxTokens: 4000 });
+    const response = await callLLM(systemPrompt, userPrompt, { temperature: 0.4, maxTokens: 4000 });
     const proposalData = parseJSON(response);
 
     if (!proposalData) {
@@ -362,7 +487,7 @@ Provide evaluation in this JSON format:
   "recommendedActions": ["action 1", "action 2", "..."]
 }`;
 
-    const response = await callGroq(systemPrompt, userPrompt, { temperature: 0.2, maxTokens: 3000 });
+    const response = await callLLM(systemPrompt, userPrompt, { temperature: 0.2, maxTokens: 3000 });
     const evaluation = parseJSON(response);
 
     if (!evaluation) {
